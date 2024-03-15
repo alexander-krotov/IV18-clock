@@ -2,6 +2,11 @@
 #include <SoftwareSerial.h>
 #include <Timezone.h>
 
+#include <DS3231.h>
+#include <Wire.h>
+
+DS3231 myRTC;
+
 static const int RXPin = 2, TXPin = 3;
 static const uint32_t GPSBaud = 9600;
 
@@ -27,6 +32,9 @@ void setup()
 {
   Serial.begin(115200);
   ss.begin(GPSBaud);
+
+  // Start the I2C interface
+  Wire.begin();
 
   Serial.println("IV-18.ino started");
 }
@@ -70,15 +78,18 @@ void loop()
         // Assume we are in Seattle.
         my_tz = &tz_us;
       }
-      get_my_time();
+      set_rtc_time();
       time_set = true;
     }
+  } else {
+    get_my_time();
+    delay(1000);
   }
-
-  // get_my_time();
 }
 
-void get_my_time()
+// Set RTC time from gps.
+// RTC time is set according to the local time zone.
+void set_rtc_time()
 {
   // There must be some easier way to set the time form GPS.
   setTime(gps.time.hour(), gps.time.minute(), gps.time.second(), gps.date.day(), gps.date.month(), gps.date.year());
@@ -86,18 +97,33 @@ void get_my_time()
   time_t my_local_time = my_tz->toLocal(utc_time);
   setTime(my_local_time);
 
+  myRTC.setClockMode(false);  // set to 24h
+
+  myRTC.setYear(year()-1900);
+  myRTC.setMonth(month());
+  myRTC.setDate(day());
+  myRTC.setHour(hour());
+  myRTC.setMinute(minute());
+  myRTC.setSecond(second());
+}
+
+void get_my_time()
+{  
+  bool century=false;
+  bool h12, PM_time;
+
   Serial.print("LOCAL TIME:" );
-  Serial.print(hour());
+  Serial.print(myRTC.getHour(h12, PM_time));
   Serial.print(":");
-  Serial.print(minute());
+  Serial.print(myRTC.getMinute());
   Serial.print(":");
-  Serial.print(second());
+  Serial.print(myRTC.getSecond());
   Serial.print(" ");
-  Serial.print(day());
+  Serial.print(myRTC.getDate());
   Serial.print(" ");
-  Serial.print(month());
+  Serial.print(myRTC.getMonth(century));
   Serial.print(" ");
-  Serial.print(year()); 
+  Serial.print(myRTC.getYear()+1900);
   Serial.println(); 
 }
 
