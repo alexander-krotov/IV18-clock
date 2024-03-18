@@ -1,14 +1,18 @@
 #include <TinyGPSPlus.h>
 #include <SoftwareSerial.h>
 #include <Timezone.h>
-
 #include <DS3231.h>
 #include <Wire.h>
 
-DS3231 myRTC;
+// RTC chip.
+DS3231 rtc;
 
+// GPS module communication pins
 static const int RXPin = 2, TXPin = 3;
-static const uint32_t GPSBaud = 9600;
+static const uint32_t GPSBaud = 4800;
+
+// Pins used with MAX6921
+static const int DINPin = A0, LOADPin = A1, CLKPin = A2, BLANKPin = A3;
 
 // The TinyGPSPlus object
 TinyGPSPlus gps;
@@ -28,14 +32,25 @@ Timezone tz_fi(rEST, rEET);
 
 Timezone *my_tz = &tz_fi;
 
+enum display_char {
+  CHAR_0, CHAR_1, CHAR_2, CHAR_3, CHAR_4, CHAR_5, CHAR_6, CHAR_7, CHAR_8, CHAR_9, 
+  CHAR_BLANK, CHAR_MINUS, CHAR_P, CHAR_C, CHAR_L, CHAR_o, CHAR_A, CHAR_E
+};
+
 void setup()
 {
   Serial.begin(115200);
+  
+  pinMode(BLANKPin, OUTPUT);
+  pinMode(CLKPin, OUTPUT);
+  pinMode(LOADPin, OUTPUT);
+  pinMode(DINPin, OUTPUT);
+
   ss.begin(GPSBaud);
 
-  // Start the I2C interface
   Wire.begin();
 
+  digitalWrite(BLANKPin, LOW);
   Serial.println("IV-18.ino started");
 }
 
@@ -46,8 +61,10 @@ bool gps_reader()
   // Ho many successful rounds we have
   static int gps_round = 0;
 
-  while (ss.available() > 0) {
-    if (gps.encode(ss.read())) {
+  if (ss.available() > 0) {
+    char s=ss.read();
+    // Serial.print(s);
+    if (gps.encode(s)) {
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
         print_info();
@@ -68,6 +85,22 @@ bool gps_reader()
   return false;
 }
 
+void display_time()
+{
+  static int n=0;
+  n++;
+  // Display only one digit for now.
+  digitalWrite(LOADPin, LOW);
+  for (int i=19; i>=0; i--) {
+    digitalWrite(CLKPin, LOW);
+    digitalWrite(DINPin, (i>=10 && i<=16 || (n%9 == i))? HIGH: LOW);
+    digitalWrite(CLKPin, HIGH);
+  }
+  digitalWrite(CLKPin, LOW);
+  digitalWrite(LOADPin, HIGH);
+  delay(2);
+}
+
 void loop()
 {
   static bool time_set = false;
@@ -78,12 +111,105 @@ void loop()
         // Assume we are in Seattle.
         my_tz = &tz_us;
       }
-      set_rtc_time();
+      if (time_set) {
+        set_rtc_time();
+        get_my_time();
+        time_set = true;
+        detachInterrupt(RXPin);
+        detachInterrupt(TXPin);
+      }
       time_set = true;
     }
-  } else {
-    get_my_time();
-    delay(1000);
+  }
+  show_display_string();
+}
+
+// 7-segment indicator bits.
+//   1
+// 2   4
+//   8
+// 16  32
+//   64
+int display_char_bits[] = {
+  1+2+4+16+32+64,   // CHAR_0,
+  4+32,             // CHAR_1
+  1+4+8+16+64,      // CHAR_2,
+  1+4+8+32+64,      // CHAR_3
+  2+4+8+32,         // CHAR_4
+  1+2+8+32+64,      // CHAR_5
+  1+4+8+16+32+64,   // CHAR_6
+  1+4+32,           // CHAR_7
+  1+2+4+8+16+32+64, // CHAR_8
+  1+2+4+8+32+64,    // CHAR_9, 
+  0,                // CHAR_BLANK
+  8,                // CHAR_MINUS
+  1+2+4+8+16,       // CHAR_P
+  1+2+16+64,        // CHAR_C
+  2+16+64,          // CHAR_L,
+  1+2+4+8,          // CHAR_o
+  1+2+4+8+16+32,    // CHAR_A
+  1+2+8+16+64       // CHAR_E
+};
+
+char display_string[8] = "01234567 ";
+
+void show_display_string()
+{
+  // In this order digits are sent to MAX3121
+    int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
+
+  for (int i=0; i<8; i++) {
+    int bits = 0;
+    int c = display_string[display_order[i]];
+    
+    switch (c) {
+      case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
+        bits = display_char_bits[c-'0'];
+        break;
+      case '-':
+        bits = display_char_bits[CHAR_MINUS];
+        break;
+      case 'P':
+        bits = display_char_bits[CHAR_P];
+        break;
+      case 'C':
+        bits = display_char_bits[CHAR_C];
+        break;
+      case 'L':
+        bits = display_char_bits[CHAR_L];
+        break;
+      case 'o':
+        bits = display_char_bits[CHAR_o];
+        break;
+      case 'A':
+        bits = display_char_bits[CHAR_A];
+        break;
+      case 'E':
+        bits = display_char_bits[CHAR_E];
+        break;
+    }
+
+    for (int j=0; j<10; j++) {
+      digitalWrite(CLKPin, LOW);
+      digitalWrite(DINPin, (bits&(1<<(9-j))) ? HIGH: LOW);
+      digitalWrite(CLKPin, HIGH);
+    }
+
+    digitalWrite(CLKPin, LOW);
+    digitalWrite(DINPin, LOW);
+    digitalWrite(CLKPin, HIGH);
+
+    for (int j=0; j<9; j++) {
+      digitalWrite(CLKPin, LOW);
+      digitalWrite(DINPin, j==i ? HIGH: LOW);
+      digitalWrite(CLKPin, HIGH);
+    }
+
+    digitalWrite(CLKPin, LOW);
+
+    digitalWrite(LOADPin, HIGH);
+    digitalWrite(LOADPin, LOW);
+    delay(1);
   }
 }
 
@@ -97,39 +223,38 @@ void set_rtc_time()
   time_t my_local_time = my_tz->toLocal(utc_time);
   setTime(my_local_time);
 
-  myRTC.setClockMode(false);  // set to 24h
-
-  myRTC.setYear(year()-1900);
-  myRTC.setMonth(month());
-  myRTC.setDate(day());
-  myRTC.setHour(hour());
-  myRTC.setMinute(minute());
-  myRTC.setSecond(second());
+  rtc.setClockMode(false);  // set to 24h
+  rtc.setYear(year()-1900);
+  rtc.setMonth(month());
+  rtc.setDate(day());
+  rtc.setHour(hour());
+  rtc.setMinute(minute());
+  rtc.setSecond(second());
 }
 
 void get_my_time()
-{  
+{
   bool century=false;
   bool h12, PM_time;
 
   Serial.print("LOCAL TIME:" );
-  Serial.print(myRTC.getHour(h12, PM_time));
+  Serial.print(rtc.getHour(h12, PM_time));
   Serial.print(":");
-  Serial.print(myRTC.getMinute());
+  Serial.print(rtc.getMinute());
   Serial.print(":");
-  Serial.print(myRTC.getSecond());
+  Serial.print(rtc.getSecond());
   Serial.print(" ");
-  Serial.print(myRTC.getDate());
+  Serial.print(rtc.getDate());
   Serial.print(" ");
-  Serial.print(myRTC.getMonth(century));
+  Serial.print(rtc.getMonth(century));
   Serial.print(" ");
-  Serial.print(myRTC.getYear()+1900);
-  Serial.println(); 
+  Serial.print(rtc.getYear()+1900);
+  Serial.println();
 }
 
 void print_info()
 {
-  Serial.print("Location: "); 
+  Serial.print("Location: ");
   if (gps.location.isValid()) {
     Serial.print(gps.location.lat(), 6);
     Serial.print(F(","));
