@@ -24,7 +24,7 @@ static const int KEYPin = A7;
 
 // The TinyGPSPlus object
 TinyGPSPlus gps;
-bool gps_info_set = true;
+bool gps_info_set = false;  // Time was set from GPS at some point.
 
 // The serial connection to the GPS device
 SoftwareSerial ss(RXPin, TXPin);
@@ -74,34 +74,11 @@ void setup()
   // Turn on the display
   digitalWrite(BLANKPin, LOW);
 
+  // Yer was set earlier. We assume it was set from GPS, and we dod not need to
+  // immediatelly got to GPS reading.
+  gps_info_set = rtc.getYear()>0;
+
   Serial.println("IV-18.ino started");
-}
-
-// Read GPS information.
-// Return true if we have reliable information (all the data is valid for 10 rounds in a row)
-bool gps_reader()
-{
-  // Count how many successful rounds we have
-  static int gps_round = 0;
-
-  if (ss.available() > 0) {
-    if (gps.encode(ss.read())) {
-      if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
-        gps_round++;
-      } else {
-        gps_round = 0;
-      }
-
-      print_gps_info();
-
-      if (gps_round > 10) {
-        // We believe the GPS data is reliable.
-        return true;
-      }
-    }
-  }
-
-  return false;
 }
 
 // 7-segment indicator bits.
@@ -287,7 +264,7 @@ void update_display()
     display_temp();
   } else if (mode==1 || mode == 2) {
     display_date();
-  } else if (!gps_info_set) {
+  } else if (!gps.location.isValid()) {
     display_time();
   } else if (mode==3) {
     display_location();
@@ -296,6 +273,33 @@ void update_display()
   } else {
     display_time();
   }
+}
+
+// Read GPS information.
+// Return true if we have reliable information (all the data is valid for 10 rounds in a row)
+bool gps_reader()
+{
+  // Count how many successful rounds we have
+  static int gps_round = 0;
+
+  if (ss.available() > 0) {
+    if (gps.encode(ss.read())) {
+      if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
+        gps_round++;
+      } else {
+        gps_round = 0;
+      }
+
+      print_gps_info();
+
+      if (gps_round > 10) {
+        // We believe the GPS data is reliable.
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 // Handle GPS communication.
