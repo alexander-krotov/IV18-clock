@@ -71,8 +71,8 @@ void setup()
     // Wire is used for DS3231.
   Wire.begin();
 
-  // Turn on the display
-  digitalWrite(BLANKPin, LOW);
+  // Turn off the display
+  digitalWrite(BLANKPin, HIGH);
 
   // Yer was set earlier. We assume it was set from GPS, and we dod not need to
   // immediatelly got to GPS reading.
@@ -152,6 +152,9 @@ void show_display_string()
   // The order is really all about hardware wiring.
   int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
 
+  // Turn on the display
+  digitalWrite(BLANKPin, LOW);
+
   // Loop through the display digits
   for (int i=0; i<display_size; i++) {
     // Take a digit in display order.
@@ -188,6 +191,9 @@ void show_display_string()
     // Delay to show the digit on display for short time.
     delay(1);
   }
+
+  // Turn off the display
+  digitalWrite(BLANKPin, HIGH);
 }
 
 // Set display_string to show the time from RTC
