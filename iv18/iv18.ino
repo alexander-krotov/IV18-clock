@@ -1,3 +1,6 @@
+// IV-18 based clock. 
+// Full project description: https://github.com/alexander-krotov/IV18-clock
+
 #include <TinyGPSPlus.h>
 #include <SoftwareSerial.h>
 #include <Timezone.h>
@@ -16,8 +19,12 @@ static const uint32_t GPSBaud = 9600;
 // Pins used with MAX6921
 static const int DINPin = A0, LOADPin = A1, CLKPin = A2, BLANKPin = A3;
 
+// Push button pin.
+static const int KEYPin = A7;
+
 // The TinyGPSPlus object
 TinyGPSPlus gps;
+bool gps_info_set = true;
 
 // The serial connection to the GPS device
 SoftwareSerial ss(RXPin, TXPin);
@@ -32,8 +39,15 @@ TimeChangeRule rEST = {"EST", Last, Sun, Mar, 1, 180};      //Eastern European T
 TimeChangeRule rEET = {"EET", Last, Sun, Oct, 1, 120};      //Eastern European Summer Time
 Timezone tz_fi(rEST, rEET);
 
-// Defult timezone is Finland. We will change it later, based on the GPS position.
+// Default timezone is Finland. We will change it later, based on the GPS position.
 Timezone *my_tz = &tz_fi;
+
+// IV-18 display size
+const int display_size = 8;
+// What we show on display
+char display_string[display_size+1];
+// Display digital dots.
+bool dots[display_size];
 
 // Characters we can display on 7-segment indicator.
 enum display_char {
@@ -51,10 +65,10 @@ void setup()
   pinMode(LOADPin, OUTPUT);
   pinMode(DINPin, OUTPUT);
 
-  // Set serial GPS module read speed.
-  ss.begin(GPSBaud);
+  // Key press pin
+  pinMode(KEYPin, INPUT);
 
-  // Wire is used for DS3231.
+    // Wire is used for DS3231.
   Wire.begin();
 
   // Turn on the display
@@ -81,15 +95,12 @@ bool gps_reader()
       print_gps_info();
 
       if (gps_round > 10) {
-        // We beleive the GPS data is reiable.
+        // We believe the GPS data is reliable.
         return true;
       }
     }
   }
 
-  if (millis() > 5000 && gps.charsProcessed() < 10) {
-    Serial.println("No GPS detected: check wiring.");
-  }
   return false;
 }
 
@@ -156,21 +167,8 @@ int get_char_bits(char c)
     return bits;
 }
 
-// What we show on display
-char display_string[8] = "01234567 ";
-// Display digital dots.
-bool dots[8];
-
-// Turn off all the dots.
-void clear_dots()
-{
-  for (int i=0; i<8; i++) {
-    dots[i] = false;
-  }
-}
-
 // Show the contents of display_string on IV-18 display.
-// Please reffer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
+// Please refer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
 void show_display_string()
 {
   // In this order digits are sent to MAX6921.
@@ -178,7 +176,7 @@ void show_display_string()
   int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
 
   // Loop through the display digits
-  for (int i=0; i<8; i++) {
+  for (int i=0; i<display_size; i++) {
     // Take a digit in display order.
     int c = display_string[display_order[i]];
 
@@ -197,7 +195,7 @@ void show_display_string()
     digitalWrite(DINPin, dots[display_order[i]] ? HIGH: LOW);
     digitalWrite(CLKPin, HIGH);
 
-    // Next is the digit numer (decoded as 8-bit bit mask).
+    // Next is the digit number (decoded as 8-bit bit mask).
     for (int j=0; j<9; j++) {
       digitalWrite(CLKPin, LOW);
       digitalWrite(DINPin, j==i ? HIGH: LOW);
@@ -206,7 +204,7 @@ void show_display_string()
     // Do not leave the CLK pin high.
     digitalWrite(CLKPin, LOW);
 
-    // Shift the digit to dispaly.
+    // Shift the digit to display.
     digitalWrite(LOADPin, HIGH);
     digitalWrite(LOADPin, LOW);
 
@@ -219,148 +217,36 @@ void show_display_string()
 void display_time()
 {
   bool h12, PM_time;
-  int hour = rtc.getHour(h12, PM_time);
-
-  if (hour>=10) {
-    display_string[0] = hour/10+'0';
-  } else {
-    display_string[0] = 0; // Blank
-  }
-  display_string[1] = hour%10+'0';
-
-  display_string[2] = '-';
-
-  int minute = rtc.getMinute();
-  display_string[3] = minute/10+'0';
-  display_string[4] = minute%10+'0';
-
-  display_string[5] = '-';
-
-  int second = rtc.getSecond();
-  display_string[6] = second/10+'0';
-  display_string[7] = second%10+'0';
+  snprintf(display_string, sizeof(display_string), "%2d-%02d-%02d", rtc.getHour(h12, PM_time), rtc.getMinute(), rtc.getSecond());
 }
 
-// Set display_string to show the time from RTC
+// Set display_string to show the date from RTC
 void display_date()
 {
-  int date = rtc.getDate();
-  if (date >= 10) {
-    display_string[0] = date/10+'0';
-  } else {
-    display_string[0] = 0;
-  }
-  display_string[1] = date%10+'0';
-  dots[1] = true;
-
-  bool century=false;
-  int month = rtc.getMonth(century);
-  display_string[2] = month/10+'0';
-  display_string[3] = month%10+'0';
-  dots[3] = true;
-
-  int year = rtc.getYear()+RTC_BASE_YEAR;
-  display_string[4] = year/1000+'0';
-  display_string[5] = (year/100)%10+'0';
-  display_string[6] = (year/10)%10+'0';
-  display_string[7] = year%10+'0';
+  bool century;
+  snprintf(display_string, sizeof(display_string), "%2d%02d%4d", rtc.getDate(), rtc.getMonth(century), rtc.getYear()+RTC_BASE_YEAR);
+  dots[1] = dots[3] = true;
 }
 
-// Set display_string to show the time location.
-// Format is "L longitude latitude"
+// Set display_string to show the GPS location.
+// Format is "L longitude latitude", including possible - sign.
+// Shows the values with one degree precision.
 void display_location()
 {
-  display_string[0] = 'L';
-  display_string[1] = ' ';
-
-  int lng = gps.location.lng();
-  int p = 2;
-
-  if (lng<0) {
-    // Show - sign befor the longitude.
-    display_string[p] = '-';
-    p++;
-    lng = -lng;
-  }
-
-  if (lng>100) {
-     display_string[p] = '1';
-     p++;
-     lng -= 100;
-  }
-
-  display_string[p] = lng/10+'0';
-  p++;
-  display_string[p] = lng%10+'0';
-  p++;
-
-  display_string[p] = ' ';
-  p++;
-
-  int lat=gps.location.lat();
-
-  if (lat<0) {
-    // Show - sign befor the longitude.
-    display_string[p] = '-';
-    p++;
-    lng = -lng;
-  }
-
-  if (p<7) {
-    display_string[p] = lng/10+'0';
-    p++;
-  }
-  if (p<7) {
-    display_string[p] = lng%10+'0';
-    p++;
-  }
-
-  for (;p<8;p++) {
-    display_string[p] = ' ';
-  }
+  snprintf(display_string, sizeof(display_string), "L %3d %d3", (int)gps.location.lng(), (int)gps.location.lat());
 }
 
+// Set display_string to show the temperature.
+// DS3231 has a built-int temperature sensor.
 void display_temp()
 {
-  int temp = rtc.getTemperature();
-  int p = 0;
-
-  display_string[p] = ' ';
-  p++;
-
-  if (temp<0) {
-    temp = -temp;
-    display_string[p] = '-';
-    p++;
-  }
-  display_string[p] = temp/10+'0';
-  p++;
-  display_string[p] = temp%10+'0';
-  p++;
-
-  display_string[p] = ' ';
-  p++;
-  display_string[p] = 'o';
-  p++;
-  display_string[p] = 'C';
-  p++;
-
-  for (;p<8;p++) {
-    display_string[p] = ' ';
-  }
+  snprintf(display_string, sizeof(display_string), "%4d oC", (int)rtc.getTemperature());
 }
 
+// Set display_string to show the GPS altitude.
 void display_altitude()
 {
-  display_string[0] = 'A';
-  display_string[1] = ' ';
-
-  for (int i=2; i<8; i++) {
-    display_string[i] = ' ';
-  }
-
-  int alt = gps.location.lng();
-  sprintf(&display_string[2], "%4d", alt);
+  snprintf(display_string, sizeof(display_string), "A %5d", (gps.altitude.meters()));
 }
 
 // Set RTC time from gps.
@@ -375,7 +261,7 @@ void set_rtc_time()
 
   rtc.setClockMode(false);  // set to 24h
 
-  // Save the fime to rtc.
+  // Save the time to rtc.
   rtc.setYear(year()-RTC_BASE_YEAR);  // RTC year is one byte. Adjust it.
   rtc.setMonth(month());
   rtc.setDate(day());
@@ -384,91 +270,78 @@ void set_rtc_time()
   rtc.setSecond(second());
 }
 
-void get_rtc_time()
-{
-  bool century=false;
-  bool h12, PM_time;
-
-  Serial.print("LOCAL TIME:" );
-  Serial.print(rtc.getHour(h12, PM_time));
-  Serial.print(":");
-  Serial.print(rtc.getMinute());
-  Serial.print(":");
-  Serial.print(rtc.getSecond());
-  Serial.print(" ");
-  Serial.print(rtc.getDate());
-  Serial.print(" ");
-  Serial.print(rtc.getMonth(century));
-  Serial.print(" ");
-  Serial.print(rtc.getYear()+RTC_BASE_YEAR);  // RTC year is one byte. Adjust it
-  Serial.println();
-}
-
+// Update the display string.
 void update_display()
 {
-  for (int i=0; i<8; i++) {
+  // Blank everything.
+  for (int i=0; i<display_size; i++) {
     display_string[i] = 0;
     dots[i] = false;
   }
-  switch ((now()/2)%10) {
-    case 0:
-    case 1:
-    case 2:
-    case 3:
-    case 4:
-        display_time();
-        break;
-    case 5:
-    case 6:
-        display_date();
-        break;
-    case 7:
-        display_temp();
-        break;
-    case 8:
-        display_location();
-        break;
-    case 9:
-        display_altitude();
+
+  // Display mode
+  int mode = (now()/2)%10;
+  
+  // In a loop show what we know: date, time, gps location, altitude, temperature.
+  if (mode==0) {
+    display_temp();
+  } else if (mode==1 || mode == 2) {
+    display_date();
+  } else if (!gps_info_set) {
+    display_time();
+  } else if (mode==3) {
+    display_location();
+  } else if (mode==4) {
+    display_altitude();
+  } else {
+    display_time();
+  }
+}
+
+// Handle GPS communication.
+void update_gps_info()
+{
+  // If the time is not set yet - read the GPS data, and set the time when it is available.
+  if (gps_info_set) {
+    if (analogRead(KEYPin) < 100) {
+      // Key is pressed, we start to read GPS data to set the time
+      gps_info_set = false;
+      // Set serial GPS module read speed.
+      ss.begin(GPSBaud);
+    }
+  } else if (gps_reader()) {
+    if (gps.location.lng()<0) {
+      // Assume we are in Seattle.
+      my_tz = &tz_us;
+    }
+
+    set_rtc_time();
+    get_rtc_time();
+    gps_info_set = true;
+    ss.end();
   }
 }
 
 void loop()
 {
-  static bool time_set = false;
-
-  // If the time is not set yet - read the GPS data, and set the time when it is available.
-  if (!time_set) {
-    if (gps_reader()) {
-      if (gps.location.lng()<0) {
-        // Assume we are in Seattle.
-        my_tz = &tz_us;
-      }
-
-      set_rtc_time();
-      get_rtc_time();
-      time_set = true;
-
-      // Interrupts initiated from GPS cause display to balnk for short time.
-      detachInterrupt(RXPin);
-      detachInterrupt(TXPin);
-    }  
-  }
+  update_gps_info();
 
   if (millis()%100<10) {
+    // Update the display string.
     update_display();
   }
 
-  // Update the dispplay
+  // Show the display digits.
   show_display_string();
 }
 
+// Print GPS info for debugging.
 void print_gps_info()
 {
   Serial.print("Location: ");
   if (gps.location.isValid()) {
     Serial.print(gps.location.lat(), 6);
-    Serial.print(F(","));
+    Serial.print(",");
     Serial.print(gps.location.lng(), 6);
   } else {
     Serial.print("INVALID");
@@ -496,5 +369,26 @@ void print_gps_info()
   } else {
     Serial.print("INVALID");
   }
+  Serial.println();
+}
+
+// Print RTC time for debugging.
+void get_rtc_time()
+{
+  bool century=false;
+  bool h12, PM_time;
+
+  Serial.print("LOCAL TIME:" );
+  Serial.print(rtc.getHour(h12, PM_time));
+  Serial.print(":");
+  Serial.print(rtc.getMinute());
+  Serial.print(":");
+  Serial.print(rtc.getSecond());
+  Serial.print(" ");
+  Serial.print(rtc.getDate());
+  Serial.print(" ");
+  Serial.print(rtc.getMonth(century));
+  Serial.print(" ");
+  Serial.print(rtc.getYear()+RTC_BASE_YEAR);  // RTC year is one byte. Adjust it
   Serial.println();
 }
