@@ -68,15 +68,20 @@ void setup()
   // Key press pin
   pinMode(KEYPin, INPUT);
 
-    // Wire is used for DS3231.
+  // Wire is used for DS3231.
   Wire.begin();
 
   // Turn off the display
   digitalWrite(BLANKPin, HIGH);
 
-  // Yer was set earlier. We assume it was set from GPS, and we dod not need to
-  // immediatelly got to GPS reading.
-  gps_info_set = rtc.getYear()>0;
+  // Year was set earlier. We assume it was set from GPS, and we do not need to
+  // immediatelly go to GPS reading.
+  if (rtc.getYear()>0) {
+    gps_info_set = true;
+  } else {
+    Serial.println("Time not set");
+    ss.begin(GPSBaud);
+  }
 
   Serial.println("IV-18.ino started");
 }
@@ -189,10 +194,14 @@ void show_display_string()
     digitalWrite(LOADPin, LOW);
 
     // Delay to show the digit on display for short time.
-    delay(1);
+    if (gps_info_set) {
+      // 1ms is sort of magic value: less - and the digits are dimmed,
+      // more - and it starts to flicker.
+      delay(1);
+    }
   }
 
-  // Turn off the display
+  // Turn off the display (the last digit was flickering a bit).
   digitalWrite(BLANKPin, HIGH);
 }
 
@@ -293,6 +302,7 @@ bool gps_reader()
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
       } else {
+        Serial.println("GPS data lost");
         gps_round = 0;
       }
 
