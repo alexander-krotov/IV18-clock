@@ -1,6 +1,8 @@
 // IV-18 based clock. 
 // Full project description: https://github.com/alexander-krotov/IV18-clock
 
+// Use Board: "Arduino Nano", and "ATMega328P (Old bootloader)" when flashing.
+
 #include <TinyGPSPlus.h>
 #include <SoftwareSerial.h>
 #include <Timezone.h>
@@ -82,6 +84,7 @@ void setup()
     Serial.println("Time not set");
     ss.begin(GPSBaud);
   }
+  set_time_from_rtc();
 
   Serial.println("IV-18.ino started");
 }
@@ -205,18 +208,31 @@ void show_display_string()
   digitalWrite(BLANKPin, HIGH);
 }
 
+// Read time from rtc and set it to the arduino system time
+void set_time_from_rtc()
+{
+  bool h12, PM_time, century;
+  setTime(rtc.getHour(h12, PM_time), rtc.getMinute(), rtc.getSecond(), rtc.getDate(), rtc.getMonth(century), rtc.getYear()+RTC_BASE_YEAR);
+}
+
 // Set display_string to show the time from RTC
 void display_time()
 {
-  bool h12, PM_time;
-  snprintf(display_string, sizeof(display_string), "%2d-%02d-%02d", rtc.getHour(h12, PM_time), rtc.getMinute(), rtc.getSecond());
+  static int last_update_from_rtc;
+
+  // Periodically set the time from rtc.
+  if (now() > last_update_from_rtc+1000) {
+    set_time_from_rtc();
+    last_update_from_rtc = now();
+  }
+
+  snprintf(display_string, sizeof(display_string), "%2d-%02d-%02d", hour(), minute(), second());
 }
 
 // Set display_string to show the date from RTC
 void display_date()
 {
-  bool century;
-  snprintf(display_string, sizeof(display_string), "%2d%02d%4d", rtc.getDate(), rtc.getMonth(century), rtc.getYear()+RTC_BASE_YEAR);
+  snprintf(display_string, sizeof(display_string), "%2d%02d%4d", day(), month(), year());
   dots[1] = dots[3] = true;
 }
 
@@ -238,7 +254,15 @@ void display_temp()
 // Set display_string to show the GPS altitude.
 void display_altitude()
 {
-  snprintf(display_string, sizeof(display_string), "A %5d", (gps.altitude.meters()));
+  int alt_cm = gps.altitude.meters()*100;
+
+  // Altitude cell part
+  int c=alt_cm/100;
+  // Altitude fraction part
+  int p = alt_cm>0 ? alt_cm%100: (-alt_cm)%100;
+ 
+  snprintf(display_string, sizeof(display_string), "A %4d%02d", c, p);
+  dots[5] = true;
 }
 
 // Set RTC time from gps.
@@ -271,7 +295,9 @@ void update_display()
     dots[i] = false;
   }
 
-  // Display mode
+  // Display mode.
+  // In 10seconds loop show the time, date, temperature, and if available
+  // show the location and altitude.
   int mode = (now()/2)%10;
   
   // In a loop show what we know: date, time, gps location, altitude, temperature.
@@ -283,7 +309,7 @@ void update_display()
     display_time();
   } else if (mode==3) {
     display_location();
-  } else if (mode==4) {
+  } else if (mode==4 && gps.altitude.isValid()) {
     display_altitude();
   } else {
     display_time();
@@ -297,8 +323,10 @@ bool gps_reader()
   // Count how many successful rounds we have
   static int gps_round = 0;
 
-  if (ss.available() > 0) {
-    if (gps.encode(ss.read())) {
+  while (ss.available() > 0) {
+    char c = ss.read();
+    // Serial.print(c);
+    if (gps.encode(c)) {
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
       } else {
@@ -308,7 +336,7 @@ bool gps_reader()
 
       print_gps_info();
 
-      if (gps_round > 10) {
+      if (gps_round > 10 && gps.altitude.isValid()) {
         // We believe the GPS data is reliable.
         return true;
       }
@@ -386,6 +414,13 @@ void print_gps_info()
     Serial.print(":");
     Serial.print(gps.time.second());
     Serial.print(".");
+  } else {
+    Serial.print("INVALID");
+  }
+
+  Serial.print(" ALT=");
+  if (gps.altitude.isValid()) {
+    Serial.print(gps.altitude.meters());
   } else {
     Serial.print("INVALID");
   }
