@@ -369,7 +369,7 @@ void update_gps_info()
 #endif
 
     set_rtc_time();
-    get_rtc_time();
+    print_rtc_time();
     gps_info_set = true;
     ss.end();
   }
@@ -382,6 +382,14 @@ void loop()
   if (millis()%100<10) {
     // Update the display string.
     update_display();
+  }
+
+  static time_t last_update_from_trc;
+  if (now() > last_update_from_trc+1000) {
+    // Every ~20 minutes sync time from RTC.
+    last_update_from_trc = now();
+    set_time_from_rtc();
+    print_rtc_time();
   }
 
   // Show the display digits.
@@ -435,7 +443,7 @@ void print_gps_info()
 }
 
 // Print RTC time for debugging.
-void get_rtc_time()
+void print_rtc_time()
 {
 #if !defined(__AVR_ATmega168__)
   bool century=false;
