@@ -31,10 +31,12 @@ bool gps_info_set = false;  // Time was set from GPS at some point.
 // The serial connection to the GPS device
 SoftwareSerial ss(RXPin, TXPin);
 
+#if !defined(__AVR_ATmega168__)
 // US Seattle time zone
 TimeChangeRule usEDT = {"EDT", Second, Sun, Mar, 2, -240};  //UTC - 4 hours
 TimeChangeRule usEST = {"EST", First, Sun, Nov, 2, -300};   //UTC - 5 hours
 Timezone tz_us(usEDT, usEST);
+#endif
 
 // Eastern European Time (Finland)
 TimeChangeRule rEST = {"EST", Last, Sun, Mar, 1, 180};      //Eastern European Time
@@ -358,10 +360,13 @@ void update_gps_info()
       ss.begin(GPSBaud);
     }
   } else if (gps_reader()) {
+
+#if !defined(__AVR_ATmega168__)
     if (gps.location.lng()<0) {
       // Assume we are in Seattle.
       my_tz = &tz_us;
     }
+#endif
 
     set_rtc_time();
     get_rtc_time();
@@ -386,6 +391,7 @@ void loop()
 // Print GPS info for debugging.
 void print_gps_info()
 {
+#if !defined(__AVR_ATmega168__)
   Serial.print("Location: ");
   if (gps.location.isValid()) {
     Serial.print(gps.location.lat(), 6);
@@ -425,11 +431,13 @@ void print_gps_info()
     Serial.print("INVALID");
   }
   Serial.println();
+#endif
 }
 
 // Print RTC time for debugging.
 void get_rtc_time()
 {
+#if !defined(__AVR_ATmega168__)
   bool century=false;
   bool h12, PM_time;
 
@@ -446,4 +454,5 @@ void get_rtc_time()
   Serial.print(" ");
   Serial.print(rtc.getYear()+RTC_BASE_YEAR);  // RTC year is one byte. Adjust it
   Serial.println();
+#endif
 }
