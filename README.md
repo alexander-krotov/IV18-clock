@@ -19,7 +19,7 @@ Final clock video: https://www.youtube.com/watch?v=CX6nEgpd1cs
 
 # Short user's manual
 
-Clock is powered by a micro-usb connector. There is a mini-usb connector on one of the onborad modules, it is not
+Clock is powered from a micro-usb connector. There is a mini-usb connector on one of the onborad modules, it is not intended
 to power the clock, only for flashing a new firmware. 
 
 Clock has a very minimalistic user interface: it uses onboard GPS to set the correct time. It reads the time from GPS 
