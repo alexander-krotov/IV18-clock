@@ -11,8 +11,6 @@ Key components:
 - DS3231 RTC: https://www.analog.com/en/products/ds3231.html
 - MAX6921 display driver: https://www.analog.com/en/products/max6921.html
 
-For the future (if I ever get back to this project): MAX7221 looks much better solution for similar design.
-
 ![clock text](https://github.com/alexander-krotov/IV18-clock/blob/main/picture.jpg?raw=true)
 
 Final clock video: https://www.youtube.com/watch?v=CX6nEgpd1cs
