@@ -148,16 +148,63 @@ void run_string_on_display(const char *str)
         dots[i] = str[i+s] == '.';
       }
 
+      // Scroll the strings on display with 5 char/sec speed.
       delay(200);
     }
 }
 
-// Function to show display string in a FreeRTOS task
+// Function to show display string in a FreeRTOS task.
+// Show the contents of display_string on IV-18 display.
+// Please refer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
 void show_display_string_task(void *parameter)
 {
-    while (true) {
-        show_display_string(); // Call the existing function
+  // In this order digits are sent to MAX6921.
+  // The order is really all about hardware wiring.
+  static const int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
+
+  // Turn on the display
+  digitalWrite(BLANKPin, LOW);
+
+  // Loop through the display digits
+  for (int i=0; ; i++) {
+    // In this infinite loop we get back to the first digit.
+    if (i == display_size) {
+      i = 0;
     }
+
+    // Take a digit in display order.
+    int c = display_string[display_order[i]];
+
+    // Character encoding for 7-segment display.
+    int bits = get_char_bits(c);
+
+    // Prepare 20-bit data to send (10 bits char + 1 bit DP + 9 bits digit select)
+    uint32_t data = 0;
+    
+    // First 10 bits: encoded char bits (highest first)
+    data = (bits & 0x3FF) << 10;
+    
+    // Next 1 bit: decimal point (DP) bit
+    if (dots[display_order[i]]) {
+      data |= (1 << 9);
+    }
+    
+    // Last 9 bits: digit number (decoded as 8-bit bit mask)
+    data |= (1 << (8 - i));
+
+    // Send 20 bits via SPI
+    SPI.transfer((data >> 16) & 0xFF);
+    SPI.transfer((data >> 8) & 0xFF);
+    SPI.transfer(data & 0xFF);
+
+    // Shift the digit to display.
+    digitalWrite(LOADPin, HIGH);
+    digitalWrite(LOADPin, LOW);
+
+    // 2ms is sort of magic value: less - and the digits are dimmed,
+    // more - and it starts to flicker.
+    vTaskDelay(pdMS_TO_TICKS(2)); // Adjust the delay as necessary
+  }
 }
 
 void setup()
@@ -285,57 +332,6 @@ int get_char_bits(char c)
     }
 
     return bits;
-}
-
-// Show the contents of display_string on IV-18 display.
-// Please refer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
-void show_display_string()
-{
-  // In this order digits are sent to MAX6921.
-  // The order is really all about hardware wiring.
-  static const int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
-
-  // Turn on the display
-  digitalWrite(BLANKPin, LOW);
-
-  // Loop through the display digits
-  for (int i=0; i<display_size; i++) {
-    // Take a digit in display order.
-    int c = display_string[display_order[i]];
-
-    // Character encoding for 7-segment display.
-    int bits = get_char_bits(c);
-
-    // Prepare 20-bit data to send (10 bits char + 1 bit DP + 9 bits digit select)
-    uint32_t data = 0;
-    
-    // First 10 bits: encoded char bits (highest first)
-    data = (bits & 0x3FF) << 10;
-    
-    // Next 1 bit: decimal point (DP) bit
-    if (dots[display_order[i]]) {
-      data |= (1 << 9);
-    }
-    
-    // Last 9 bits: digit number (decoded as 8-bit bit mask)
-    data |= (1 << (8 - i));
-
-    // Send 20 bits via SPI
-    SPI.transfer((data >> 16) & 0xFF);
-    SPI.transfer((data >> 8) & 0xFF);
-    SPI.transfer(data & 0xFF);
-
-    // Shift the digit to display.
-    digitalWrite(LOADPin, HIGH);
-    digitalWrite(LOADPin, LOW);
-
-    // 1ms is sort of magic value: less - and the digits are dimmed,
-    // more - and it starts to flicker.
-    vTaskDelay(pdMS_TO_TICKS(2)); // Adjust the delay as necessary
-  }
-
-  // Turn off the display (the last digit was flickering a bit).
-  digitalWrite(BLANKPin, HIGH);
 }
 
 // Set clock time to H:M:S
