@@ -69,10 +69,10 @@ struct timezone tz = {0, 0};
 
 // IV-18 display size
 const int display_size = 8;
-// What we show on display
-char display_string[display_size+1];
-// Display digital dots.
-bool dots[display_size];
+// The actual display bits (in format expected by MAX6921 via SPI).
+// We set it in the main loop, but display is running in a dedicated thread
+// to smoother display update.
+uint32_t display_bits[display_size];
 
 // Global variable for the display task handle
 TaskHandle_t displayTaskHandle;
@@ -133,6 +133,10 @@ void write_eeprom_data()
 void run_string_on_display(const char *str)
 {
     int len = strlen(str);
+    // What we show on display
+    char display_string[display_size+1] = { 0 };
+    // Display digital dots.
+    bool dots[display_size];
 
     log_printf("run_string_on_display: str=%s len=%d\n", str, len);
 
@@ -149,8 +153,43 @@ void run_string_on_display(const char *str)
       }
 
       // Scroll the strings on display with 5 char/sec speed.
+      update_display_string(display_string, dots);
       delay(200);
     }
+}
+
+void update_display_string(const char display_string[], const bool dots[])
+{
+  // In this order digits are sent to MAX6921.
+  // The order is really all about hardware wiring.
+  static const int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
+
+  for (int i=0; i<display_size; i++) {
+    // Take a digit in display order.
+    int c = display_string[display_order[i]];
+
+    // Character encoding for 7-segment display.
+    int bits = get_char_bits(c);
+
+    // Prepare 20-bit data to send (10 bits char + 1 bit DP + 9 bits digit select)
+    uint32_t data = 0;
+
+    // First 10 bits: encoded char bits (highest first)
+    data = (bits & 0x3FF) << 10;
+
+    // Next 1 bit: decimal point (DP) bit
+    if (dots[display_order[i]]) {
+      data |= (1 << 9);
+    }
+
+    if (data != 0) {
+      // Last 9 bits: digit number (decoded as 8-bit bit mask)
+      data |= (1 << (8 - i));
+    }
+
+    // Store it in the buffer, used by display thread.
+    display_bits[i] = data;
+  }
 }
 
 // Function to show display string in a FreeRTOS task.
@@ -158,10 +197,6 @@ void run_string_on_display(const char *str)
 // Please refer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
 void show_display_string_task(void *parameter)
 {
-  // In this order digits are sent to MAX6921.
-  // The order is really all about hardware wiring.
-  static const int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
-
   // Turn on the display
   digitalWrite(BLANKPin, LOW);
 
@@ -172,26 +207,15 @@ void show_display_string_task(void *parameter)
       i = 0;
     }
 
-    // Take a digit in display order.
-    int c = display_string[display_order[i]];
+    // Read the current encoded digit.
+    // Note, this read formally is not thread-safe,
+    // but incorrecly shown digit will be corrected in few milliseconds.
+    uint32_t data = display_bits[i];
 
-    // Character encoding for 7-segment display.
-    int bits = get_char_bits(c);
-
-    // Prepare 20-bit data to send (10 bits char + 1 bit DP + 9 bits digit select)
-    uint32_t data = 0;
-    
-    // First 10 bits: encoded char bits (highest first)
-    data = (bits & 0x3FF) << 10;
-    
-    // Next 1 bit: decimal point (DP) bit
-    if (dots[display_order[i]]) {
-      data |= (1 << 9);
+    if (data==0) {
+      // Nothing to show here.
+      continue;
     }
-    
-    // Last 9 bits: digit number (decoded as 8-bit bit mask)
-    data |= (1 << (8 - i));
-
     // Send 20 bits via SPI
     SPI.transfer((data >> 16) & 0xFF);
     SPI.transfer((data >> 8) & 0xFF);
@@ -225,7 +249,7 @@ void setup()
 
   // Initialize SPI
   SPI.begin(CLKPin, -1, DINPin);
-  SPI.setClockDivider(SPI_CLOCK_DIV2);
+  SPI.setFrequency(5000000);  // 5 MHz frequency
   SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST);
 
@@ -267,6 +291,18 @@ void setup()
       getNtpTime();
     }
   }
+
+#if 0
+  // Setup display refresh timer (4 times/sec).
+  // Disabeld for this project because we cannot use localtime() inside
+  // ISR timer function.
+  // We need localtime to show the date, time could be printed without.
+  static hw_timer_t * Timer0_Cfg = timerBegin(1000);
+  if (Timer0_Cfg) {
+    log_printf("Timer setup\n");
+    timerAttachInterrupt(Timer0_Cfg, &Timer0_ISR);
+    timerAlarm(Timer0_Cfg, 250, true, 0);
+#endif
 
   Serial.println("IV-18.ino started");
 }
@@ -375,51 +411,53 @@ void set_time_from_rtc()
 }
 
 // Set display_string to show the time from RTC
-void display_time()
+void display_time(char display_string[], bool dots[])
 {
-  time_t t = time(NULL);
-  tm *ttm = localtime(&t);
+  struct timeval tv;
+  gettimeofday(&tv, &tz);
+  tm *ttm = localtime(&tv.tv_sec);
 
-  snprintf(display_string, sizeof(display_string), "%2d %02d %02d", ttm->tm_hour, ttm->tm_min, ttm->tm_sec);
+  snprintf(display_string, display_size+1, "%2d %02d %02d", ttm->tm_hour, ttm->tm_min, ttm->tm_sec);
+
   if (clock_bar_mode == 0) {
   } else if (clock_bar_mode == 1) {
-    if (millis()%1000<500) {
+    if (tv.tv_usec >= 500000) {
       display_string[2] = '-';
     } else {
       display_string[5] = '-';
     }
-  } else if ((clock_bar_mode == 2 && millis()%1000<500) || clock_bar_mode == 3) {
+  } else if ((clock_bar_mode == 2 && tv.tv_usec >= 500000) || clock_bar_mode == 3) {
     display_string[2] = display_string[5] = '-';
   }
 }
 
 // Set display_string to show the date from RTC
-void display_date()
+void display_date(char display_string[], bool dots[])
 {
   time_t t = time(NULL);
   tm *ttm = localtime(&t);
 
-  snprintf(display_string, sizeof(display_string), "%2d%02d%4d", ttm->tm_mday, ttm->tm_mon+1, ttm->tm_year);
+  snprintf(display_string, display_size+1, "%2d%02d%4d", ttm->tm_mday, ttm->tm_mon+1, ttm->tm_year);
   dots[1] = dots[3] = true;
 }
 
 // Set display_string to show the GPS location.
 // Format is "L longitude latitude", including possible - sign.
 // Shows the values with one degree precision.
-void display_location()
+void display_location(char display_string[], bool dots[])
 {
-  snprintf(display_string, sizeof(display_string), "L %3d %d3", (int)gps.location.lng(), (int)gps.location.lat());
+  snprintf(display_string, display_size+1, "L %3d %d3", (int)gps.location.lng(), (int)gps.location.lat());
 }
 
 // Set display_string to show the temperature.
 // DS3231 has a built-int temperature sensor.
-void display_temp()
+void display_temp(char display_string[], bool dots[])
 {
-  snprintf(display_string, sizeof(display_string), "%4d oC", (int)clock_temp);
+  snprintf(display_string, display_size+1, "%4d oC", (int)clock_temp);
 }
 
 // Set display_string to show the GPS altitude.
-void display_altitude()
+void display_altitude(char display_string[], bool dots[])
 {
   int alt_cm = gps.altitude.meters()*100;
 
@@ -428,7 +466,7 @@ void display_altitude()
   // Altitude fraction part
   int p = alt_cm>0 ? alt_cm%100: (-alt_cm)%100;
  
-  snprintf(display_string, sizeof(display_string), "A %4d%02d", c, p);
+  snprintf(display_string, display_size+1, "A %4d%02d", c, p);
   dots[5] = true;
 }
 
@@ -445,15 +483,18 @@ void set_rtc_time()
   rtc.setHour(ttm->tm_hour);
 }
 
-// Update the display string.
+// Timer function to update the display string.
 void update_display()
 {
+  char display_string[display_size+1];
+  bool dots[display_size+1];
+
   // Blank everything.
-  for (int i=0; i<display_size; i++) {
+  for (int i=0; i<=display_size; i++) {
     display_string[i] = 0;
     dots[i] = false;
   }
-
+ 
   // Display mode.
   // In 10seconds loop show the time, date, temperature, and if available
   // show the location and altitude.
@@ -461,18 +502,20 @@ void update_display()
   
   // In a loop show what we know: date, time, gps location, altitude, temperature.
   if (mode==0) {
-    display_temp();
+    display_temp(display_string, dots);
   } else if (mode==1 || mode == 2) {
-    display_date();
+    display_date(display_string, dots);
   } else if (!gps_info_set) {
-    display_time();
+    display_time(display_string, dots);
   } else if (mode==3) {
-    display_location();
+    display_location(display_string, dots);
   } else if (gps.altitude.isValid()) {
-    display_altitude();
+    display_altitude(display_string, dots);
   } else {
-    display_time();
+    display_time(display_string, dots);
   }
+
+  update_display_string(display_string, dots);
 }
 
 // Read GPS information.
@@ -566,11 +609,6 @@ void loop()
     update_gps_info();
   }
 
-  if (millis()%100<10) {
-    // Update the display string.
-    update_display();
-  }
-
   static time_t last_update_from_trc;
   if (time(NULL) > last_update_from_trc+1000) {
     // Every ~20 minutes sync time from RTC.
@@ -578,6 +616,12 @@ void loop()
     set_time_from_rtc();
     print_rtc_time();
   }
+
+  static int i;
+  if (i%128==0) {
+    update_display();
+  }
+  i++;
 
   ui.tick();
 }
