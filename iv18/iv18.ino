@@ -11,6 +11,7 @@
 #include <TimeLib.h>
 #include <WiFiUdp.h>
 #include <GyverPortal.h>
+#include <SPI.h>
 
 // GPS serial pins
 static const int RXD2 = 21; // To TX
@@ -166,6 +167,12 @@ void setup()
 
   Wire.begin(SDA_PIN, SCL_PIN);
 
+  // Initialize SPI
+  SPI.begin(CLKPin, -1, DINPin);
+  SPI.setClockDivider(SPI_CLOCK_DIV2);
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setBitOrder(MSBFIRST);
+
   // Serial Monitor
   Serial.begin(115200);
 
@@ -287,26 +294,24 @@ void show_display_string()
     // Character encoding for 7-segment display.
     int bits = get_char_bits(c);
 
-    // First we send the encoded char bits (highest first).
-    for (int j=0; j<10; j++) {
-      digitalWrite(CLKPin, LOW);
-      digitalWrite(DINPin, (bits&(1<<(9-j))) ? HIGH: LOW);
-      digitalWrite(CLKPin, HIGH);
+    // Prepare 20-bit data to send (10 bits char + 1 bit DP + 9 bits digit select)
+    uint32_t data = 0;
+    
+    // First 10 bits: encoded char bits (highest first)
+    data = (bits & 0x3FF) << 10;
+    
+    // Next 1 bit: decimal point (DP) bit
+    if (dots[display_order[i]]) {
+      data |= (1 << 9);
     }
+    
+    // Last 9 bits: digit number (decoded as 8-bit bit mask)
+    data |= (1 << (8 - i));
 
-    // Next is the decimal point (DP) bit.
-    digitalWrite(CLKPin, LOW);
-    digitalWrite(DINPin, dots[display_order[i]] ? HIGH: LOW);
-    digitalWrite(CLKPin, HIGH);
-
-    // Next is the digit number (decoded as 8-bit bit mask).
-    for (int j=0; j<9; j++) {
-      digitalWrite(CLKPin, LOW);
-      digitalWrite(DINPin, j==i ? HIGH: LOW);
-      digitalWrite(CLKPin, HIGH);
-    }
-    // Do not leave the CLK pin high.
-    digitalWrite(CLKPin, LOW);
+    // Send 20 bits via SPI
+    SPI.transfer((data >> 16) & 0xFF);
+    SPI.transfer((data >> 8) & 0xFF);
+    SPI.transfer(data & 0xFF);
 
     // Shift the digit to display.
     digitalWrite(LOADPin, HIGH);
