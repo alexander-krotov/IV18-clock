@@ -60,7 +60,7 @@ GyverPortal ui;
 // RTC chip.
 DS3231 rtc;
 // RTC year is one byte. We need to adjust it.
-const int RTC_BASE_YEAR = 2000;
+const int RTC_BASE_YEAR = 1900;
 // Temperature read from RTC
 float clock_temp;
 
@@ -143,13 +143,16 @@ void run_string_on_display(const char *str)
     // Scroll string over display
     for (int s=-display_size; s<=len; s++) {
       for (int i=0; i<display_size; i++) {
-        if (i+s>=0 && i+s<len && str[i+s]>='0' && str[i+s]<='9') {
+        dots[i] = false;
+        display_string[i] = ' ';
+        if (i+s<0 || i+s>=len) {
+          // Out of string or out of display.
+        } else if (str[i+s]>='0' && str[i+s]<='9') {
           // character fits to the display and is between 0 and 9.
           display_string[i] = str[i+s];
-        } else {
-          display_string[i] = ' ';
+        } else if (str[i+s]=='.') {
+          dots[i] = true;
         }
-        dots[i] = str[i+s] == '.';
       }
 
       // Scroll the strings on display with 5 char/sec speed.
@@ -233,6 +236,7 @@ void show_display_string_task(void *parameter)
 
 void setup()
 {
+  // Serial Monitor
   Serial.begin(115200);
 
   // Communicate with MAX6921 using this pins.
@@ -252,9 +256,6 @@ void setup()
   SPI.setFrequency(5000000);  // 5 MHz frequency
   SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST);
-
-  // Serial Monitor
-  Serial.begin(115200);
 
   EEPROM.begin(100);
 
@@ -400,8 +401,8 @@ void set_time_from_rtc()
   // Check time for sanity.
   if (h<24 && m<60 && s<60) {
     bool century;
-    struct tm tm = { .tm_sec=s, .tm_min=m, .tm_hour=h, .tm_mday=rtc.getDate(), .tm_mon=rtc.getMonth(century), .tm_year = rtc.getYear()+1900 };
-    log_printf("set date from RTC: %02u-%02u-%04u\n", tm.tm_mday, tm.tm_mon, tm.tm_year);
+    struct tm tm = { .tm_sec=s, .tm_min=m, .tm_hour=h, .tm_mday=rtc.getDate(), .tm_mon=rtc.getMonth(century)-1, .tm_year = rtc.getYear()+RTC_BASE_YEAR };
+    log_printf("set date from RTC: %02u-%02u-%04u\n", tm.tm_mday, tm.tm_mon+1, tm.tm_year);
 
     struct timeval tv = { .tv_sec = mktime(&tm), .tv_usec = 0 };
     settimeofday(&tv, &tz);
@@ -486,15 +487,10 @@ void set_rtc_time()
 // Timer function to update the display string.
 void update_display()
 {
-  char display_string[display_size+1];
-  bool dots[display_size+1];
-
   // Blank everything.
-  for (int i=0; i<=display_size; i++) {
-    display_string[i] = 0;
-    dots[i] = false;
-  }
- 
+  char display_string[display_size+1] = { 0 };
+  bool dots[display_size+1] = { 0 };
+
   // Display mode.
   // In 10seconds loop show the time, date, temperature, and if available
   // show the location and altitude.
@@ -685,13 +681,11 @@ time_t getNtpTime()
       rtc.setMinute(ttm->tm_min);
       rtc.setHour(ttm->tm_hour);
 
-      log_printf("Receive NTP Response %lu\n", (unsigned long)secsSince1900);
+      log_printf("Receive NTP Response date: %d-%d-%d\n", ttm->tm_mday, ttm->tm_mon+1, ttm->tm_year);
 
-      rtc.setDate (ttm->tm_mday);
-      rtc.setMonth(ttm->tm_mon);
-      rtc.setYear(ttm->tm_year);
-
-      log_printf("Receive NTP Response %lu\n", (unsigned long)secsSince1900);
+      rtc.setDate(ttm->tm_mday);    // Day range in tm: 1-31, in RTC it is the same
+      rtc.setMonth(ttm->tm_mon+1);  // Month range in tm: 0-11, in RTC: 1-12
+      rtc.setYear(ttm->tm_year);    // Year since (RTC_BASE_YEAR)
 
       struct timeval tv = { .tv_sec = mktime(ttm), .tv_usec = 0 };
       settimeofday(&tv, &tz);
