@@ -74,6 +74,9 @@ char display_string[display_size+1];
 // Display digital dots.
 bool dots[display_size];
 
+// Global variable for the display task handle
+TaskHandle_t displayTaskHandle;
+
 // Characters we can display on 7-segment indicator.
 enum display_char {
   CHAR_0, CHAR_1, CHAR_2, CHAR_3, CHAR_4, CHAR_5, CHAR_6, CHAR_7, CHAR_8, CHAR_9, 
@@ -145,9 +148,15 @@ void run_string_on_display(const char *str)
         dots[i] = str[i+s] == '.';
       }
 
-      for (int i=0; i<40; i++) {
-        show_display_string();
-      }
+      delay(200);
+    }
+}
+
+// Function to show display string in a FreeRTOS task
+void show_display_string_task(void *parameter)
+{
+    while (true) {
+        show_display_string(); // Call the existing function
     }
 }
 
@@ -190,7 +199,10 @@ void setup()
 
   set_time_from_rtc();
 
-    // Initialize network and UI
+  // Create FreeRTOS task for showing display string
+  xTaskCreate(show_display_string_task, "DisplayTask", 2048, NULL, 1, &displayTaskHandle);
+
+  // Initialize network and UI
   if (initialize_network()) {
     IPAddress myIP = WiFi.localIP();
     String ip_addr_str = myIP.toString();
@@ -281,7 +293,7 @@ void show_display_string()
 {
   // In this order digits are sent to MAX6921.
   // The order is really all about hardware wiring.
-  int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
+  static const int display_order[] = { 6, 4, 2, 1, 0, 3, 5, 7 };
 
   // Turn on the display
   digitalWrite(BLANKPin, LOW);
@@ -319,7 +331,7 @@ void show_display_string()
 
     // 1ms is sort of magic value: less - and the digits are dimmed,
     // more - and it starts to flicker.
-    delay(1);
+    vTaskDelay(pdMS_TO_TICKS(2)); // Adjust the delay as necessary
   }
 
   // Turn off the display (the last digit was flickering a bit).
@@ -570,9 +582,6 @@ void loop()
     set_time_from_rtc();
     print_rtc_time();
   }
-
-  // Show the display digits.
-  show_display_string();
 
   ui.tick();
 }
