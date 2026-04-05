@@ -13,9 +13,9 @@
 #include <GyverPortal.h>
 #include <SPI.h>
 
-// GPS serial pins
-static const int RXD2 = 21; // To TX
-static const int TXD2 = 20; // To RX 
+// GPS serial pins - Note: RXD2 is connected to GPS TX, TXD2 is connected to GPS RX (crossed)
+static const int RXD2 = 21;
+static const int TXD2 = 20; 
 static const uint32_t GPS_BAUD = 9600;
 
 // MAX6921 pins.
@@ -31,7 +31,7 @@ static const int SCL_PIN = 9;
 // The TinyGPSPlus object
 TinyGPSPlus gps;
 
-// GPS info succesfluly read at lest once.
+// GPS info successfully read at lest once.
 bool gps_info_set;
 
 // The serial connection to the GPS device
@@ -46,7 +46,7 @@ unsigned char clock_bar_mode = 0;   // bar mode
 unsigned char clock_use_ntp = true;  // Use NTP switch
 unsigned char clock_use_rtc = true;  // Use RTC switch
 unsigned char clock_use_gps = true; // Use GPS time source 
-unsigned char clock_show_sec = true; // Shiw the seconds (or keep 2 last digits blank) 
+unsigned char clock_show_sec = true; // Show the seconds (or keep 2 last digits blank) 
 
 // Clock EEPROM data address.
 const int eeprom_addr=12;
@@ -343,7 +343,7 @@ int get_char_bits(char c)
 {
   int bits = 0;
 
-  // Find the bits for character (default is BLANK = all 0).
+  // Indices match the display_char enum for direct lookup
   switch (c) {
     case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
       bits = display_char_bits[c-'0'];
@@ -369,9 +369,9 @@ int get_char_bits(char c)
     case 'E':
       bits = display_char_bits[CHAR_E];
       break;
-    }
+  }
 
-    return bits;
+  return bits;
 }
 
 // Set clock time to H:M:S
@@ -455,7 +455,7 @@ void display_location(char display_string[], bool dots[])
 }
 
 // Set display_string to show the temperature.
-// DS3231 has a built-int temperature sensor.
+// DS3231 has a built-in temperature sensor.
 void display_temp(char display_string[], bool dots[])
 {
   snprintf(display_string, display_size+1, "%4d oC", (int)clock_temp);
@@ -496,7 +496,7 @@ void update_display()
   bool dots[display_size+1] = { 0 };
 
   // Display mode.
-  // In 10seconds loop show the time, date, temperature, and if available
+  // In 20seconds loop show the time, date, temperature, and if available
   // show the location and altitude.
   int mode = (time(NULL)/2)%10;
   
@@ -609,10 +609,10 @@ void loop()
     update_gps_info();
   }
 
-  static time_t last_update_from_trc;
-  if (time(NULL) > last_update_from_trc+1000) {
+  static time_t last_update_from_rtc;
+  if (time(NULL) > last_update_from_rtc+1000) {
     // Every ~20 minutes sync time from RTC.
-    last_update_from_trc = time(NULL);
+    last_update_from_rtc = time(NULL);
     set_time_from_rtc();
     print_rtc_time();
   }
@@ -724,8 +724,9 @@ void sendNTPpacket(IPAddress &address)
   Udp.endPacket();
 }
 
-
 // Create a configuration form for the web UI
+// Contains two main tabs: Clock config (timezone, modes, time sources)
+// and Time (manual time setting)
 void build()
 {
   log_printf("BUILD\n");
