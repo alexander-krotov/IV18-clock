@@ -161,6 +161,9 @@ void run_string_on_display(const char *str)
     }
 }
 
+// Set the string to display (display_string) with decimal dots (dots array).
+// Function encodeds the data to display_bits array, and later used in 
+// show_display_string_task.
 void update_display_string(const char display_string[], const bool dots[])
 {
   // In this order digits are sent to MAX6921.
@@ -418,7 +421,8 @@ void display_time(char display_string[], bool dots[])
   gettimeofday(&tv, &tz);
   tm *ttm = localtime(&tv.tv_sec);
 
-  snprintf(display_string, display_size+1, "%2d %02d %02d", ttm->tm_hour, ttm->tm_min, ttm->tm_sec);
+  snprintf(display_string, display_size+1, clock_leading_0 ? "%02d %02d %02d": "%2d %02d %02d",
+           ttm->tm_hour, ttm->tm_min, ttm->tm_sec);
 
   if (clock_bar_mode == 0) {
   } else if (clock_bar_mode == 1) {
