@@ -14,8 +14,8 @@
 #include <SPI.h>
 
 // GPS serial pins - Note: RXD2 is connected to GPS TX, TXD2 is connected to GPS RX (crossed)
-static const int RXD2 = 21;
-static const int TXD2 = 20; 
+static const int RXD2 = 20;
+static const int TXD2 = 21; 
 static const uint32_t GPS_BAUD = 9600;
 
 // MAX6921 pins.
@@ -32,10 +32,10 @@ static const int SCL_PIN = 9;
 TinyGPSPlus gps;
 
 // GPS info successfully read at lest once.
-bool gps_info_set;
+int  gps_info_set;
 
 // The serial connection to the GPS device
-HardwareSerial  gpsSerial(1);
+HardwareSerial gpsSerial(1);
 
 // Clock global configuration.
 char ntpServerName[80] = "fi.pool.ntp.org";
@@ -523,20 +523,19 @@ void update_display()
 bool gps_reader()
 {
   // Count how many successful rounds we have
-  static int gps_round = 0;
+  static unsigned int gps_round = 0;
 
   while (gpsSerial.available() > 0) {
     char c = gpsSerial.read();
-    // Serial.print(c);
+    log_printf("%c", c);
     if (gps.encode(c)) {
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
+        // log_printf("GPS data round %d\n", gps_round);
       } else {
-        Serial.println("GPS data lost");
+        // log_printf("GPS data lost\n");
         gps_round = 0;
       }
-
-      print_gps_info();
 
       if (gps_round > 10 && gps.altitude.isValid()) {
         // We believe the GPS data is reliable.
@@ -553,9 +552,11 @@ void update_gps_info()
 {
   // If the time is not set yet - read the GPS data, and set the time when it is available.
   if (gps_reader()) {
-    set_rtc_time();
-    print_rtc_time();
-    gps_info_set = true;
+    if (gps_info_set % 16*1024 == 0) {
+      set_rtc_time();
+      print_rtc_time();
+    }
+    gps_info_set++;
   }
 }
 
