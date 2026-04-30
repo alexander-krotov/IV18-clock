@@ -17,12 +17,18 @@ Final clock video: https://www.youtube.com/watch?v=CX6nEgpd1cs
 
 # Short user's manual
 
-Clock is powered from a usb-c connector, placed on ESP32C3 Super-Mini module. Same usb-c port is used to flush the firmware.
+Clock is powered from a usb-c connector, placed on ESP32C3 Super-Mini module. Same usb-c port is used to flash the firmware.
 
-Once turned on it connects to known WiFi network. If available it runs the assigned IP address on display, otherwise it starts its own access point NixieClock, and for 1 minute waits for configuration setting.
+Once turned on it connects to known WiFi network. If available it runs the assigned IP address on the display, otherwise it starts its own access point NixieClock, and for 1 minute waits for configuration settings.
 
 Once the time is set the clock keeps it even if powered off, if there is a backup battery inserted.
 
 Clock shows the current date in dd.mm.yyyy format, current time in hh-mm-ss format, temperature (measured by one of the
 black board chips). If GPS location is known it prints the clock location (in "L ww nn" format, with one degree precision),
 and altitude (in "A mmm" format, in meters).
+
+Clock can use both NTP and GPS as the time source. Both provide UTC time, without adjusting to the current timezone,
+and do not do that silly DST changes. Local timezone could be configured in the clocks Web-UI, if needed.
+
+If both GPS position and WiFi network are available the clock automatically finds the local timezone and adjusts to
+the timezone automatically.
