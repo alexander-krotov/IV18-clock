@@ -1,4 +1,4 @@
-// IV-18 based clock. 
+// IV-18 based clock.
 // Full project description: https://github.com/alexander-krotov/IV18-clock
 
 // Use Board: ESP32C3 version
@@ -12,10 +12,15 @@
 #include <WiFiUdp.h>
 #include <GyverPortal.h>
 #include <SPI.h>
+#include <WiFiUdp.h>
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+
+#include "api-keys.h" // timezonedb_api_key
 
 // GPS serial pins - Note: RXD2 is connected to GPS TX, TXD2 is connected to GPS RX (crossed)
 static const int RXD2 = 20;
-static const int TXD2 = 21; 
+static const int TXD2 = 21;
 static const uint32_t GPS_BAUD = 9600;
 
 // MAX6921 pins.
@@ -37,16 +42,19 @@ int  gps_info_set;
 // The serial connection to the GPS device
 HardwareSerial gpsSerial(1);
 
+// Number of minutes per hour.
+const int MINS_PER_HOUR = 60;
+
 // Clock global configuration.
 char ntpServerName[80] = "fi.pool.ntp.org";
-signed char clock_tz = 2; // Timezone shift (could be negative)
+int16_t  clock_tz = 2*MINS_PER_HOUR; // Timezone shift (could be negative) in minutes
 unsigned char clock_12 = 0;  // If non-zero clock is 12h, otherwise 24h
 unsigned char clock_leading_0;  // Show hour leading 0
 unsigned char clock_bar_mode = 0;   // bar mode
 unsigned char clock_use_ntp = true;  // Use NTP switch
 unsigned char clock_use_rtc = true;  // Use RTC switch
-unsigned char clock_use_gps = true; // Use GPS time source 
-unsigned char clock_show_sec = true; // Show the seconds (or keep 2 last digits blank) 
+unsigned char clock_use_gps = true; // Use GPS time source
+unsigned char clock_show_sec = true; // Show the seconds (or keep 2 last digits blank)
 
 // Clock EEPROM data address.
 const int eeprom_addr=12;
@@ -61,10 +69,10 @@ GyverPortal ui;
 DS3231 rtc;
 // RTC year is one byte. We need to adjust it.
 const int RTC_BASE_YEAR = 1900;
-// Temperature read from RTC
-float clock_temp;
 
-// Our fake TZ
+// Our fake TZ.
+// It does not relly work in ESP32 environment, but still needed for the standard
+// functions as a parameter.
 struct timezone tz = {0, 0};
 
 // IV-18 display size
@@ -79,7 +87,7 @@ TaskHandle_t displayTaskHandle;
 
 // Characters we can display on 7-segment indicator.
 enum display_char {
-  CHAR_0, CHAR_1, CHAR_2, CHAR_3, CHAR_4, CHAR_5, CHAR_6, CHAR_7, CHAR_8, CHAR_9, 
+  CHAR_0, CHAR_1, CHAR_2, CHAR_3, CHAR_4, CHAR_5, CHAR_6, CHAR_7, CHAR_8, CHAR_9,
   CHAR_BLANK, CHAR_MINUS, CHAR_P, CHAR_C, CHAR_L, CHAR_o, CHAR_A, CHAR_E
 };
 
@@ -102,7 +110,7 @@ bool initialize_network()
 void read_eeprom_data()
 {
   // Read the EEPROM settings.
-  clock_tz = (signed char)EEPROM.read(eeprom_addr);
+  clock_tz = EEPROM.readShort(eeprom_addr);
   clock_12 = EEPROM.read(eeprom_addr+2);
   clock_leading_0 = EEPROM.read(eeprom_addr+3);
   clock_bar_mode = EEPROM.read(eeprom_addr+4);
@@ -111,13 +119,12 @@ void read_eeprom_data()
   clock_use_gps = EEPROM.read(eeprom_addr+7);
   clock_show_sec = EEPROM.read(eeprom_addr+8);
   EEPROM.readString(eeprom_addr+9, ntpServerName, sizeof(ntpServerName)-1);
-  EEPROM.commit();
 }
 
 // Write the config data to EEPROM.
 void write_eeprom_data()
 {
-  EEPROM.write(eeprom_addr, clock_tz);
+  EEPROM.writeShort(eeprom_addr, clock_tz);
   EEPROM.write(eeprom_addr+2, clock_12);
   EEPROM.write(eeprom_addr+3, clock_leading_0);
   EEPROM.write(eeprom_addr+4, clock_bar_mode);
@@ -162,7 +169,7 @@ void run_string_on_display(const char *str)
 }
 
 // Set the string to display (display_string) with decimal dots (dots array).
-// Function encodeds the data to display_bits array, and later used in 
+// Function encodeds the data to display_bits array, and later used in
 // show_display_string_task.
 void update_display_string(const char display_string[], const bool dots[])
 {
@@ -292,7 +299,7 @@ void setup()
 
     // Fetch NTP time if enabled
     if (clock_use_ntp) {
-      getNtpTime();
+      get_ntp_time();
     }
   }
 
@@ -327,7 +334,7 @@ int display_char_bits[] = {
   1+2+8+16+32+64,   // CHAR_6
   1+4+32,           // CHAR_7
   1+2+4+8+16+32+64, // CHAR_8
-  1+2+4+8+32+64,    // CHAR_9, 
+  1+2+4+8+32+64,    // CHAR_9,
   0,                // CHAR_BLANK
   8,                // CHAR_MINUS
   1+2+4+8+16,       // CHAR_P
@@ -405,12 +412,10 @@ void set_time_from_rtc()
   if (h<24 && m<60 && s<60) {
     bool century;
     struct tm tm = { .tm_sec=s, .tm_min=m, .tm_hour=h, .tm_mday=rtc.getDate(), .tm_mon=rtc.getMonth(century)-1, .tm_year = rtc.getYear()+RTC_BASE_YEAR };
-    log_printf("set date from RTC: %02u-%02u-%04u\n", tm.tm_mday, tm.tm_mon+1, tm.tm_year);
+    log_printf("set date from RTC: %02u-%02u-%04u TZ=%d\n", tm.tm_mday, tm.tm_mon+1, tm.tm_year, clock_tz);
 
-    struct timeval tv = { .tv_sec = mktime(&tm), .tv_usec = 0 };
+    struct timeval tv = { .tv_sec = mktime(&tm)+clock_tz*60, .tv_usec = 0 };
     settimeofday(&tv, &tz);
-
-    clock_temp = rtc.getTemperature();
   }
 }
 
@@ -458,7 +463,7 @@ void display_location(char display_string[], bool dots[])
 // DS3231 has a built-in temperature sensor.
 void display_temp(char display_string[], bool dots[])
 {
-  snprintf(display_string, display_size+1, "%4d oC", (int)clock_temp);
+  snprintf(display_string, display_size+1, "%4d oC", (int)rtc.getTemperature());
 }
 
 // Set display_string to show the GPS altitude.
@@ -470,22 +475,9 @@ void display_altitude(char display_string[], bool dots[])
   int c=alt_cm/100;
   // Altitude fraction part
   int p = alt_cm>0 ? alt_cm%100: (-alt_cm)%100;
- 
+
   snprintf(display_string, display_size+1, "A %4d%02d", c, p);
   dots[5] = true;
-}
-
-// Set RTC time from gps.
-// RTC time is set according to the local time zone.
-void set_rtc_time()
-{
-  // Get current time for the form
-  time_t t = time(NULL);
-  tm *ttm = localtime(&t);
-  rtc.setClockMode(false);  // set to 24h
-  rtc.setSecond(ttm->tm_sec);
-  rtc.setMinute(ttm->tm_min);
-  rtc.setHour(ttm->tm_hour);
 }
 
 // Timer function to update the display string.
@@ -499,7 +491,7 @@ void update_display()
   // In 20seconds loop show the time, date, temperature, and if available
   // show the location and altitude.
   int mode = (time(NULL)/2)%10;
-  
+
   // In a loop show what we know: date, time, gps location, altitude, temperature.
   if (mode==0) {
     display_temp(display_string, dots);
@@ -509,7 +501,7 @@ void update_display()
     display_time(display_string, dots);
   } else if (mode==3) {
     display_location(display_string, dots);
-  } else if (gps.altitude.isValid()) {
+  } else if (mode==4 && gps.altitude.isValid()) {
     display_altitude(display_string, dots);
   } else {
     display_time(display_string, dots);
@@ -527,13 +519,10 @@ bool gps_reader()
 
   while (gpsSerial.available() > 0) {
     char c = gpsSerial.read();
-    log_printf("%c", c);
     if (gps.encode(c)) {
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
-        // log_printf("GPS data round %d\n", gps_round);
       } else {
-        // log_printf("GPS data lost\n");
         gps_round = 0;
       }
 
@@ -550,11 +539,14 @@ bool gps_reader()
 // Handle GPS communication.
 void update_gps_info()
 {
-  // If the time is not set yet - read the GPS data, and set the time when it is available.
+  // Read the GPS data, and set the time when it is available.
   if (gps_reader()) {
-    if (gps_info_set % 16*1024 == 0) {
-      set_rtc_time();
-      print_rtc_time();
+    // Sometimes (every few days), get the GPS info to RTC.
+    if (gps_info_set % (1024*1024) == 0) {
+      print_gps_info();
+      set_gps_time(); // Take GPS time to RTC
+      update_timezone_from_gps(); // Timezone info (based on GPS coordinates to clock_tz)
+      set_time_from_rtc(); // Set the time fomr RTC (that includes timezone correction).
     }
     gps_info_set++;
   }
@@ -572,7 +564,7 @@ void print_gps_info()
     Serial.print("INVALID");
   }
 
-  Serial.print("Date/Time: ");
+  Serial.print(" Date/Time: ");
   if (gps.date.isValid()) {
     Serial.print(gps.date.month());
     Serial.print("/");
@@ -604,6 +596,102 @@ void print_gps_info()
   Serial.println();
 }
 
+// Set the GPS date and tiem to RTC.
+void set_gps_time()
+{
+  if (gps.time.isValid()) {
+    rtc.setHour(gps.time.hour());
+    rtc.setMinute(gps.time.minute());
+    rtc.setSecond(gps.time.second());
+  }
+
+  if (gps.date.isValid()) {
+    rtc.setMonth(gps.date.month()+1);
+    rtc.setDate(gps.date.day());
+    rtc.setYear(gps.date.year() - RTC_BASE_YEAR);
+  }
+}
+
+// Get timezone from TimezoneDB API based on GPS coordinates
+// Returns the timezone offset in minutes (can be negative)
+// Returns INT_MIN if the request fails
+int getTimezoneFromGPS()
+{
+  // Check if we have valid GPS coordinates
+  if (!gps.location.isValid()) {
+    log_printf("GPS location not valid\n");
+    return INT_MIN;
+  }
+
+  // Check if API key is set
+  if (strlen(timezonedb_api_key) == 0) {
+    log_printf("TimezoneDB API key not set\n");
+    return INT_MIN;
+  }
+
+  HTTPClient http;
+
+  // Build the URL with GPS coordinates
+  char url[256];
+  snprintf(url, sizeof(url),
+    "http://api.timezonedb.com/v2.1/get-time-zone?key=%s&format=json&by=position&lat=%f&lng=%f",
+    timezonedb_api_key, gps.location.lat(), gps.location.lng());
+
+  log_printf("Requesting timezone from: %s\n", url);
+
+  http.begin(url);
+  int httpResponseCode = http.GET();
+
+  if (httpResponseCode != 200) {
+    log_printf("HTTP error code: %d\n", httpResponseCode);
+    http.end();
+    return INT_MIN;
+  }
+
+  String payload = http.getString();
+  http.end();
+
+  // Parse JSON response
+  DynamicJsonDocument doc(512);
+  DeserializationError error = deserializeJson(doc, payload);
+
+  if (error) {
+    log_printf("JSON parsing failed: %s\n", error.c_str());
+    return INT_MIN;
+  }
+
+  // Extract timezone offset
+  if (doc.containsKey("gmtOffset")) {
+    int gmtOffset = doc["gmtOffset"]; // Offset in seconds
+    int tzMinutes = gmtOffset / 60;   // Convert to minutes
+
+    log_printf("Timezone offset: %d minutes\n", tzMinutes);
+    return tzMinutes;
+  }
+
+  log_printf("gmtOffset not found in response\n");
+  return INT_MIN;
+}
+
+// Periodically update timezone from GPS
+void update_timezone_from_gps()
+{
+  int tz_offset = getTimezoneFromGPS();
+
+  if (tz_offset != INT_MIN) {
+    if (tz_offset != clock_tz) {
+      log_printf("Updating timezone from %d to %d\n", clock_tz, tz_offset);
+      clock_tz = tz_offset;
+      write_eeprom_data();
+
+      // Update system time with new timezone
+      if (clock_use_rtc) {
+        set_time_from_rtc();
+      }
+    }
+  }
+}
+
 void loop()
 {
   if (clock_use_gps) {
@@ -633,7 +721,7 @@ void print_rtc_time()
   bool century=false;
   bool h12, PM_time;
 
-  Serial.print("LOCAL TIME:" );
+  Serial.print("RTC time:" );
   Serial.print(rtc.getHour(h12, PM_time));
   Serial.print(":");
   Serial.print(rtc.getMinute());
@@ -655,7 +743,7 @@ const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
 
 // Get current time from NTP server
-time_t getNtpTime()
+time_t get_ntp_time()
 {
   IPAddress ntpServerIP; // NTP server's IP address
 
@@ -675,8 +763,8 @@ time_t getNtpTime()
       secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
       secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
       secsSince1900 |= (unsigned long)packetBuffer[43];
-      // Convert NTP time to UNIX time and apply timezone offset
-      secsSince1900 = secsSince1900 - 2208988800UL + clock_tz * SECS_PER_HOUR;
+      // Convert NTP time to UNIX time.
+      secsSince1900 = secsSince1900 - 2208988800UL;
 
       log_printf("Receive NTP Response %lu\n", (unsigned long)secsSince1900);
 
@@ -692,7 +780,8 @@ time_t getNtpTime()
       rtc.setMonth(ttm->tm_mon+1);  // Month range in tm: 0-11, in RTC: 1-12
       rtc.setYear(ttm->tm_year);    // Year since (RTC_BASE_YEAR)
 
-      struct timeval tv = { .tv_sec = mktime(ttm), .tv_usec = 0 };
+      // Set the system time from tmm, including timezoene correction.
+      struct timeval tv = { .tv_sec = mktime(ttm)+clock_tz*60, .tv_usec = 0 };
       settimeofday(&tv, &tz);
 
       return secsSince1900;
@@ -793,7 +882,7 @@ void action(GyverPortal& p)
 
     // Read the new values, and check them for sanity.
     n = ui.getInt("clock_tz");
-    if (n>=-12 && n<=12) {
+    if (n>=-20*MINS_PER_HOUR && n<=20*MINS_PER_HOUR) {
       if (n!=clock_tz) {
         update_time = true;
       }
@@ -845,10 +934,10 @@ void action(GyverPortal& p)
 
     // If timezone changed, update system time
     if (update_time) {
-      if (clock_use_ntp) {
-        getNtpTime();
-      } else if (clock_use_rtc) {
+      if (clock_use_rtc) {
         set_time_from_rtc();
+      } else if (clock_use_ntp) {
+        get_ntp_time();
       }
     }
   }
@@ -857,12 +946,6 @@ void action(GyverPortal& p)
   if (p.form("/settime")) {
     GPtime gptime = ui.getTime("time");
     log_printf("Action Settime: %d:%02d:%02d\n", gptime.hour, gptime.minute, gptime.second);
-
-    // Set time to RTC
-    rtc.setSecond(gptime.second);
-    rtc.setMinute(gptime.minute);
-    rtc.setHour(gptime.hour);
-
     set_clock_time(gptime.hour, gptime.minute, gptime.second);
   }
 }
