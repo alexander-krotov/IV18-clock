@@ -2,7 +2,7 @@
 
 DIY clock with IV-18 VFD display (ИВ-18 in Russian).
 
-Hardware schematics is published https://oshwlab.com/alexander.krotov/iv-18-clock XXX
+Hardware schematics is published https://oshwlab.com/alexander.krotov/iv-18-clock_copy_copy_copy
 
 It was tested with both NEO-8m and NEO-6. It also should work with any GPS module supported by TinyGPS library.
 
