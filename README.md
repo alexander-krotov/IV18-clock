@@ -4,6 +4,8 @@ DIY clock with IV-18 VFD display (ИВ-18 in Russian).
 
 Hardware schematics is published https://oshwlab.com/alexander.krotov/iv-18-clock XXX
 
+It was tested with both NEO-8m and NEO-6. It also should work with any GPS module supported by TinyGPS library.
+
 Key components:
 - IV-18 display: https://www.radiomuseum.org/tubes/tube_iv-18.html (better spec in Russian: https://radioizba.ru/cat/PIC/605Q0503400.pdf )
 - ESP32C3 Super-Mini module: https://www.espboards.dev/esp32/esp32-c3-super-mini/
@@ -11,9 +13,9 @@ Key components:
 - DS3231 RTC: https://www.analog.com/en/products/ds3231.html
 - MAX6921 display driver: https://www.analog.com/en/products/max6921.html
 
-![clock text](https://github.com/alexander-krotov/IV18-clock/blob/main/picture.jpg?raw=true)
+![clock text](https://github.com/alexander-krotov/IV18-clock/blob/esp32/picture.jpg?raw=true)
 
-Final clock video: https://www.youtube.com/watch?v=CX6nEgpd1cs
+Final clock video: https://www.youtube.com/watch?v=4OeplCNZRic
 
 # Short user's manual
 
