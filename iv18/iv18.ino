@@ -606,7 +606,7 @@ void set_gps_time()
   }
 
   if (gps.date.isValid()) {
-    rtc.setMonth(gps.date.month()+1);
+    rtc.setMonth(gps.date.month());
     rtc.setDate(gps.date.day());
     rtc.setYear(gps.date.year() - RTC_BASE_YEAR);
   }
