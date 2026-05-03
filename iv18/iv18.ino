@@ -33,19 +33,23 @@ static const int DINPin = 4;
 static const int SDA_PIN = 8;
 static const int SCL_PIN = 9;
 
-// The TinyGPSPlus object
+// GPS data parser - processes NMEA sentences from GPS module
 TinyGPSPlus gps;
 
-// GPS info successfully read at lest once.
+
+// Flag indicating GPS has provided valid data at least once
+// Used to conditionally display GPS-dependent information
 int  gps_info_set;
 
-// The serial connection to the GPS device
+// Hardware serial connection to GPS module (UART 1)
+// GPS module outputs NMEA protocol sentences at 9600 baud
 HardwareSerial gpsSerial(1);
 
 // Number of minutes per hour.
 const int MINS_PER_HOUR = 60;
 
-// Clock global configuration.
+// Display configuration - controls clock behavior and display modes
+// These values are persisted in EEPROM and configurable via web UI
 char ntpServerName[80] = "fi.pool.ntp.org";
 int16_t  clock_tz = 2*MINS_PER_HOUR; // Timezone shift (could be negative) in minutes
 unsigned char clock_12 = 0;  // If non-zero clock is 12h, otherwise 24h
@@ -205,17 +209,20 @@ void update_display_string(const char display_string[], const bool dots[])
   }
 }
 
-// Function to show display string in a FreeRTOS task.
-// Show the contents of display_string on IV-18 display.
+// FreeRTOS task - continuously refreshes IV-18 display
+// Multiplexes 8 digits with ~2ms refresh rate per digit
+// Higher refresh rate dims display, lower causes flicker
+// Reads display_bits[] array which is updated by main thread
+// Note: Uses simple synchronization - occasional display glitches are acceptable
 // Please refer to MAX6921 documentation about how we send the data in 19-bit encoded strings.
 void show_display_string_task(void *parameter)
 {
-  // Turn on the display
+  // Enable display output (active LOW on MAX6921)
   digitalWrite(BLANKPin, LOW);
 
   // Loop through the display digits
   for (int i=0; ; i++) {
-    // In this infinite loop we get back to the first digit.
+    // Wrap around to first digit after showing all 8
     if (i == display_size) {
       i = 0;
     }
@@ -226,10 +233,11 @@ void show_display_string_task(void *parameter)
     uint32_t data = display_bits[i];
 
     if (data==0) {
-      // Nothing to show here.
+      // Skip display of blank digits (all segments off)
       continue;
     }
-    // Send 20 bits via SPI
+    // Send 20-bit digit data to MAX6921 via SPI
+    // Format: [8-bit upper][8-bit middle][8-bit lower]
     SPI.transfer((data >> 16) & 0xFF);
     SPI.transfer((data >> 8) & 0xFF);
     SPI.transfer(data & 0xFF);
@@ -238,9 +246,14 @@ void show_display_string_task(void *parameter)
     digitalWrite(LOADPin, HIGH);
     digitalWrite(LOADPin, LOW);
 
-    // 2ms is sort of magic value: less - and the digits are dimmed,
-    // more - and it starts to flicker.
-    vTaskDelay(pdMS_TO_TICKS(2)); // Adjust the delay as necessary
+    // Latch digit into display (rising edge triggers output)
+    digitalWrite(LOADPin, HIGH);
+    digitalWrite(LOADPin, LOW);
+
+    // Hold for 2ms: empirically determined balance between brightness and flicker
+    // <2ms: dimmed display  |  >2ms: noticeable flicker
+    // Might nieed adjustments for specific VFD.
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 
@@ -481,6 +494,9 @@ void display_altitude(char display_string[], bool dots[])
 }
 
 // Timer function to update the display string.
+// Update display with current information in rotating sequence
+// Cycles through: temperature → date → GPS location (if valid) → altitude → time
+// Each information shown for ~2 seconds (10 modes × 2 seconds = 20 second cycle)
 void update_display()
 {
   // Blank everything.
@@ -492,12 +508,18 @@ void update_display()
   // show the location and altitude.
   int mode = (time(NULL)/2)%10;
 
-  // In a loop show what we know: date, time, gps location, altitude, temperature.
+  // Display rotation sequence:
+  // Mode 0:     Temperature (from RTC sensor)
+  // Mode 1-2:   Date (shown twice for 4 seconds total)
+  // Mode 3:     GPS latitude/longitude (if GPS fix obtained)
+  // Mode 4:     GPS altitude (if GPS altitude valid)
+  // Mode 5-9:   Time (default fallback)
   if (mode==0) {
     display_temp(display_string, dots);
   } else if (mode==1 || mode == 2) {
     display_date(display_string, dots);
   } else if (!gps_info_set) {
+    // No valid GPS data yet - show time instead of location/altitude
     display_time(display_string, dots);
   } else if (mode==3) {
     display_location(display_string, dots);
@@ -511,7 +533,15 @@ void update_display()
 }
 
 // Read GPS information.
-// Return true if we have reliable information (all the data is valid for 10 rounds in a row)
+// Process incoming GPS data stream and validate quality
+// Returns true only when GPS has provided 10+ consecutive valid reads
+// (Indicates stable position lock and reliable data)
+// 
+// GPS receivers often output invalid data before achieving lock:
+// - Partial NMEA sentences (incomplete data)
+// - Invalid coordinates (0,0) or future dates
+// 
+// Requiring 10 consecutive valid reads ensures data reliability
 bool gps_reader()
 {
   // Count how many successful rounds we have
@@ -520,9 +550,12 @@ bool gps_reader()
   while (gpsSerial.available() > 0) {
     char c = gpsSerial.read();
     if (gps.encode(c)) {
+      // Check if all essential fields are valid (location, time, date)
+      // Altitude is NOT required for this check (validated separately)
       if (gps.location.isValid() && gps.time.isValid() && gps.date.isValid()) {
         gps_round++;
       } else {
+        // Any invalid field resets the counter - start over
         gps_round = 0;
       }
 
@@ -612,9 +645,13 @@ void set_gps_time()
   }
 }
 
-// Get timezone from TimezoneDB API based on GPS coordinates
-// Returns the timezone offset in minutes (can be negative)
-// Returns INT_MIN if the request fails
+// Periodically query TimezoneDB API to determine timezone from GPS location
+// Called approximately every 1 million GPS updates (~24+ hours)
+// Updates system timezone if GPS location moves to different zone
+// 
+// Requires: timezonedb_api_key defined in api-keys.h
+//          WiFi connectivity
+//          GPS lock with valid coordinates
 int getTimezoneFromGPS()
 {
   // Check if we have valid GPS coordinates
@@ -692,20 +729,32 @@ void update_timezone_from_gps()
   }
 }
 
+// Sync system time from RTC approximately every 1000+ seconds (~20 minutes)
+// Ensures system clock stays aligned with hardware RTC despite drift
+// Counter-intuitive: time(NULL) doesn't start at 0 after every power cycle
+void update_time_from_rtc()
+{
+  static time_t last_update_from_rtc;
+  if (last_update_from_rtc==0 || time(NULL) > last_update_from_rtc+1000) {
+    last_update_from_rtc = time(NULL);
+    set_time_from_rtc();      // Sync system time from RTC (applies timezone)
+    print_rtc_time();         // Debug output to serial
+  }
+}
+
 void loop()
 {
+  // Process GPS data stream continuously (if GPS mode enabled)
+  // Updates gps_info_set flag and may trigger timezone/time updates
   if (clock_use_gps) {
     update_gps_info();
   }
 
-  static time_t last_update_from_rtc;
-  if (time(NULL) > last_update_from_rtc+1000) {
-    // Every ~20 minutes sync time from RTC.
-    last_update_from_rtc = time(NULL);
-    set_time_from_rtc();
-    print_rtc_time();
-  }
+  update_time_from_rtc();
 
+  // Update display every 128 loop iterations
+  // With WiFi/UI overhead, this provides ~1-2 Hz display refresh rate
+  // Fast enough to appear smooth while not overloading the CPU
   static int i;
   if (i%128==0) {
     update_display();
