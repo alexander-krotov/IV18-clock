@@ -91,6 +91,27 @@ void setup()
   Serial.println("IV-18.ino started");
 }
 
+void loop()
+{
+  update_gps_info();
+
+  if (millis()%100<10) {
+    // Update the display string.
+    update_display();
+  }
+
+  static time_t last_update_from_trc;
+  if (now() > last_update_from_trc+1000) {
+    // Every ~20 minutes sync time from RTC.
+    last_update_from_trc = now();
+    set_time_from_rtc();
+    print_rtc_time();
+  }
+
+  // Show the display digits.
+  show_display_string();
+}
+
 // 7-segment indicator bits.
 //   1
 // 2   4
@@ -373,27 +394,6 @@ void update_gps_info()
     gps_info_set = true;
     ss.end();
   }
-}
-
-void loop()
-{
-  update_gps_info();
-
-  if (millis()%100<10) {
-    // Update the display string.
-    update_display();
-  }
-
-  static time_t last_update_from_trc;
-  if (now() > last_update_from_trc+1000) {
-    // Every ~20 minutes sync time from RTC.
-    last_update_from_trc = now();
-    set_time_from_rtc();
-    print_rtc_time();
-  }
-
-  // Show the display digits.
-  show_display_string();
 }
 
 // Print GPS info for debugging.
