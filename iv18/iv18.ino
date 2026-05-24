@@ -58,7 +58,7 @@ unsigned char clock_bar_mode = 0;   // bar mode
 unsigned char clock_use_ntp = true;  // Use NTP switch
 unsigned char clock_use_rtc = true;  // Use RTC switch
 unsigned char clock_use_gps = true; // Use GPS time source
-unsigned char clock_show_sec = true; // Show the seconds (or keep 2 last digits blank)
+unsigned char clock_show_temp = false; // Show the temperature
 
 // Clock EEPROM data address.
 const int eeprom_addr=12;
@@ -121,7 +121,7 @@ void read_eeprom_data()
   clock_use_ntp = EEPROM.read(eeprom_addr+5);
   clock_use_rtc = EEPROM.read(eeprom_addr+6);
   clock_use_gps = EEPROM.read(eeprom_addr+7);
-  clock_show_sec = EEPROM.read(eeprom_addr+8);
+  clock_show_temp = EEPROM.read(eeprom_addr+8);
   EEPROM.readString(eeprom_addr+9, ntpServerName, sizeof(ntpServerName)-1);
 }
 
@@ -135,7 +135,7 @@ void write_eeprom_data()
   EEPROM.write(eeprom_addr+5, clock_use_ntp);
   EEPROM.write(eeprom_addr+6, clock_use_rtc);
   EEPROM.write(eeprom_addr+7, clock_use_gps);
-  EEPROM.write(eeprom_addr+8,clock_show_sec);
+  EEPROM.write(eeprom_addr+8, clock_show_temp);
   EEPROM.writeString(eeprom_addr+9, ntpServerName);
   EEPROM.commit();
 }
@@ -514,14 +514,11 @@ void update_display()
   // Mode 3:     GPS latitude/longitude (if GPS fix obtained)
   // Mode 4:     GPS altitude (if GPS altitude valid)
   // Mode 5-9:   Time (default fallback)
-  if (mode==0) {
+  if (mode == 0 && clock_show_temp) {
     display_temp(display_string, dots);
   } else if (mode==1 || mode == 2) {
     display_date(display_string, dots);
-  } else if (!gps_info_set) {
-    // No valid GPS data yet - show time instead of location/altitude
-    display_time(display_string, dots);
-  } else if (mode==3) {
+  } else if (mode==3 && gps_info_set) {
     display_location(display_string, dots);
   } else if (mode==4 && gps.altitude.isValid()) {
     display_altitude(display_string, dots);
@@ -886,8 +883,7 @@ void build()
     GP_MAKE_BOX(GP.LABEL("Use NTP"); GP.SWITCH("clock_use_ntp", clock_use_ntp ? true: false););
     GP_MAKE_BOX(GP.LABEL("Use RTC"); GP.SWITCH("clock_use_rtc", clock_use_rtc ? true: false, 0););
     GP_MAKE_BOX(GP.LABEL("Use GPS"); GP.SWITCH("clock_use_gps", clock_use_gps ? true: false, 0););
-    GP_MAKE_BOX(GP.LABEL("Show seconds"); GP.SWITCH("clock_show_sec", clock_show_sec ? true: false, 0););
-
+    GP_MAKE_BOX(GP.LABEL("Show temperatue"); GP.SWITCH("clock_show_temp", clock_show_temp ? true: false, 0););
     GP_MAKE_BOX(GP.LABEL("NTP Server name: "); GP.TEXT("clock_ntp_server", "local NTP server if you have", ntpServerName, "", sizeof(ntpServerName)-1););
   );
   GP.SUBMIT("UPDATE");
@@ -968,9 +964,9 @@ void action(GyverPortal& p)
       clock_use_gps = n;
     }
 
-    n = ui.getBool("clock_show_sec");
+    n = ui.getBool("clock_show_temp");
     if (n>=0 && n<=1) {
-      clock_show_sec = n;
+      clock_show_temp = n;
     }
 
     String s = ui.getString("clock_ntp_server");
