@@ -4,7 +4,7 @@ DIY clock with IV-18 VFD display (ИВ-18 in Russian).
 
 Hardware schematics is published https://oshwlab.com/alexander.krotov/iv-18-clock_copy_copy_copy
 
-It was tested with both NEO-8m and NEO-6. It also should work with any GPS module supported by TinyGPS library.
+It should work with any GPS module supported by TinyGPS library (tested with NEO-8m and NEO-6 only).
 
 Key components:
 - IV-18 display: https://www.radiomuseum.org/tubes/tube_iv-18.html (better spec in Russian: https://radioizba.ru/cat/PIC/605Q0503400.pdf )
@@ -19,18 +19,37 @@ Final clock video: https://www.youtube.com/watch?v=4OeplCNZRic
 
 # Short user's manual
 
-Clock is powered from a usb-c connector, placed on ESP32C3 Super-Mini module. Same usb-c port is used to flash the firmware.
+## Clock Operation
 
-Once turned on it connects to known WiFi network. If available it runs the assigned IP address on the display, otherwise it starts its own access point NixieClock, and for 1 minute waits for configuration settings.
+The clock is powered via a USB-C connector located on the ESP32-C3 Super Mini module. The same USB-C port is also used for firmware flashing.
 
-Once the time is set the clock keeps it even if powered off, if there is a backup battery inserted.
+When powered on, the clock attempts to connect to a known Wi-Fi network. If a connection is established, it displays the assigned IP address. Otherwise, it starts its own access point named **NixieClock** and waits for configuration settings for one minute.
+Network setup is very similar to https://github.com/alexander-krotov/apollo-clock/blob/main/setup.md
 
-Clock shows the current date in dd.mm.yyyy format, current time in hh-mm-ss format, temperature (measured by one of the
-black board chips). If GPS location is known it prints the clock location (in "L ww nn" format, with one degree precision),
-and altitude (in "A mmm" format, in meters).
+Once the time has been set, the clock retains it even when powered off, provided that a backup battery is installed.
 
-Clock can use both NTP and GPS as the time source. Both provide UTC time, without adjusting to the current timezone,
-and do not do that silly DST changes. Local timezone could be configured in the clocks Web-UI, if needed.
+## Displayed Information
 
-If both GPS position and WiFi network are available the clock automatically finds the local timezone and adjusts to
-the timezone automatically.
+The clock displays:
+
+* Current date in **dd.mm.yyyy** format
+* Current time in **hh-mm-ss** format
+* Temperature measured by one of the onboard sensors
+
+If a GPS location is available, the clock also displays:
+
+* Location in **`L ww nn`** format (latitude and longitude with one-degree precision)
+* Altitude in **`A mmm`** format (meters above sea level)
+
+## Time Sources
+
+The clock can use either NTP or GPS as its time source. Both provide UTC time without applying time zone offsets or daylight saving time (DST) adjustments. A local time zone can be configured through the clock's web interface if required.
+
+If both a GPS position and a Wi-Fi connection are available, the clock automatically determines the local time zone and applies the correct offset.
+
+## Temperature display note
+
+One of the board transistor significantly heats and affects the temperatue sensor on the clock borad, so the temperature display could be very incorrect. It could be turned off in the clock Web UI.
+
+
+
